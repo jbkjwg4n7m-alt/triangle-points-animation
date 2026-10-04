@@ -6,282 +6,468 @@
 <title>Math Triangle Points Animation</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
 <style>
-html, body { margin: 0; padding: 0; overflow: hidden; background: #0f172a; }
+html, body { margin: 0; padding: 0; overflow: hidden; background: #0f172a; font-family: system-ui, sans-serif; }
 canvas { display: block; }
+
+#controls {
+  position: absolute; top: 16px; left: 16px; z-index: 100;
+  display: flex; flex-direction: column; gap: 8px;
+}
+#controls button {
+  background: #1e293b; color: #e2e8f0; border: 1px solid #475569;
+  padding: 10px 16px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  transition: background 0.2s, transform 0.1s; white-space: nowrap;
+}
+#controls button:hover { background: #334155; transform: scale(1.03); }
+#controls button:active { transform: scale(0.97); }
+
+#info-panel {
+  position: absolute; bottom: 16px; right: 16px; z-index: 100;
+  background: rgba(15,23,42,0.88); color: #e2e8f0; padding: 14px 18px;
+  border-radius: 8px; font-size: 13px; max-width: 270px; line-height: 1.7;
+  border: 1px solid #334155;
+}
+#info-panel .title { color: #a5b4fc; font-weight: 700; }
+
+#coords-box {
+  position: absolute; top: 16px; right: 16px; z-index: 100;
+  background: rgba(15,23,42,0.88); color: #94a3b8; padding: 8px 14px;
+  border-radius: 6px; font-size: 12px; line-height: 1.7; border: 1px solid #334155;
+}
+
+#point-label {
+  position: absolute; z-index: 100; pointer-events: none; display: none;
+  background: rgba(15,23,42,0.92); color: #f1f5f9; padding: 6px 12px;
+  border-radius: 6px; font-size: 12px; white-space: nowrap;
+  border: 1px solid #475569; transform: translate(-50%, -130%);
+}
 </style>
 </head>
 <body>
-<script>
-// === CONFIGURATION ===
-const CONFIG = {
-  numPoints: 6,
-  animSpeed: 0.015,
-};
 
-// === STATE ===
-let A, B, C; // Triangle vertices
-let centers = []; // Mathematical centers (incenter, centroid, etc.)
-let labels = []; // Names for each center
-let timeElapsed = 0;
+<div id="controls">
+  <button onclick="doRandom()">🔀 Randomise Triangle</button>
+  <button onclick="doPause()">⏸ Pause / Resume</button>
+  <button onclick="doShowAll()">📌 Show All Points</button>
+  <button onclick="doNextPoint()">▶ Next Point</button>
+  <button onclick="doFaster()">🐇 Faster</button>
+  <button onclick="doSlower()">🐢 Slower</button>
+</div>
+
+<div id="info-panel">
+  <span class="title" id="panel-title">Math Triangle Animation</span><br>
+  Click buttons above or press keys:<br>
+  <b>R</b> = randomise &nbsp; <b>Space</b> = pause<br>
+  <b>N</b> = next point &nbsp; <b>F</b>/<b>S</b> = speed
+</div>
+
+<div id="coords-box" id="vertex-coords"></div>
+<div id="point-label"></div>
+
+<script>
+// ====== PALETTE (RGB hex → HSB converted properly) ======
+const POINT_COLORS = [
+  { name: 'Centroid',     hex: '#51cf66', desc: 'Intersection of medians' },
+  { name: 'Incenter',     hex: '#ff6b6b', desc: 'Equal distance from sides' },
+  { name: 'Circumcenter', hex: '#ffd43b', desc: 'Equal distance from vertices' },
+  { name: 'Orthocenter',  hex: '#cc5de8', desc: 'Intersection of altitudes' },
+  { name: 'Nine-point',   hex: '#20c997', desc: 'Passes through midpoints' },
+  { name: 'Symmedian',    hex: '#ff922b', desc: 'Isogonal conjugate of centroid' },
+];
+
+function hexCol(hex) {
+  const c = color(hex);          // p5.js Color in current mode
+  return [c.red(), c.green(), c.blue()];  // extract RGB
+}
+
+// State
+let A, B, C;
+let centers = [];
+let selectedIdx = -1;   // -1 = show all
+let pauseMode = false;
+let tElapsed = 0;
+let timeScale = 1.0;
 
 function setup() {
   createCanvas(windowWidth, windowHeight);
   randomSeed(42);
-  noiseSeed(42);
+  colorMode(HSB, 360, 100, 100);  // HSB only once in setup
   
   generateRandomTriangle();
-  calculateCenters();
-  
-  colorMode(HSB, 360, 100, 100, 100);
 }
 
 function draw() {
-  background('#0f172a');
-  timeElapsed++;
+  background('#0f172a');         // p5 parses this string into HSB internally
   
-  // Draw animated triangle with pulsing effect
+  if (!pauseMode) tElapsed += timeScale;
+  
   animateTriangle();
+  drawConnections();
+  drawCenters();
   
-  // Calculate animation phase based on depth (simulate camera)
-  const animPhase = sin(timeElapsed * CONFIG.animSpeed) * 0.5 + 0.5;
-  
-  // Draw connecting lines and points
-  drawConnections(animPhase);
-  
-  // Mark centers with labels rotating in/out view
-  drawCenters(animPhase);
+  updateCoordsDisplay();
 }
 
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 }
 
-// ====== GEOMETRY FUNCTIONS ======
+// ====== GENERATION ======
 
 function generateRandomTriangle() {
-  const padding = 150;
-  const minX = padding;
-  const maxX = width - padding;
-  const minY = padding + 100;
-  const maxY = height - padding;
+  const m = 120;
+  A = { x: random(m, width*0.35), y: random(m, height*0.4) };
+  B = { x: random(width*0.65, width-m), y: random(m, height*0.4) };
+  C = { x: random(m, width-m), y: random(height*0.6, height-m) };
   
-  A = { x: random(minX, (maxX + minX) / 2), y: random(minY, (minY + maxY) / 2) };
-  B = { x: random((maxX + minX) / 2, maxX), y: random(minY, (minY + maxY) / 2) };
-  C = { x: random(minX, maxX), y: random((minY + maxY) / 2, maxY) };
+  if (area() < 8000) generateRandomTriangle();  // retry if flat
   
-  const area = abs(
-    A.x * (B.y - C.y) + 
-    B.x * (C.y - A.y) + 
-    C.x * (A.y - B.y)
-  ) / 2;
-  
-  if (area < 5000) generateRandomTriangle(); // Retry if too small
+  recalcCenters();
 }
 
-function dist(a, b) {
-  return sqrt(
-    sq(a.x - b.x) + 
-    sq(a.y - b.y)
+function area() {
+  return abs(A.x*(B.y-C.y) + B.x*(C.y-A.y) + C.x*(A.y-B.y)) / 2;
+}
+
+function d(a, b) {
+  return sqrt(sq(a.x-b.x) + sq(a.y-b.y));
+}
+
+function recalcCenters() {
+  centers = [];
+  
+  const a = d(B,C), b = d(A,C), c_ = d(A,B);  // side lengths opposite A,B,C
+  
+  // Centroid
+  centers.push({ x: (A.x+B.x+C.x)/3, y: (A.y+B.y+C.y)/3, info: POINT_COLORS[0] });
+  
+  // Incenter
+  const s = a+b+c_;
+  centers.push({ x: (a*A.x+b*B.x+c_*C.x)/s, y: (a*A.y+b*B.y+c_*C.y)/s, info: POINT_COLORS[1] });
+  
+  // Circumcenter
+  const det = 2*(A.x*(B.y-C.y)+B.x*(C.y-A.y)+C.x*(A.y-B.y));
+  if (abs(det) > 0.5) {
+    const Ux = ((sq(A.x)+sq(A.y))*(B.y-C.y)+(sq(B.x)+sq(B.y))*(C.y-A.y)+(sq(C.x)+sq(C.y))*(A.y-B.y))/det;
+    const Uy = (((sq(A.x)+sq(A.y))*(C.x-B.x)+(sq(B.x)+sq(B.y))*(A.x-C.x)+(sq(C.x)+sq(C.y))*(B.x-A.x))/det);
+    centers.push({ x: Ux, y: Uy, info: POINT_COLORS[2] });
+  } else {
+    centers.push(centers[0]);  // degenerate fallback
+  }
+  
+  // Orthocenter (via reflections trick)
+  if (abs(det) > 0.5) {
+    const c1 = -A.x, c2 = -A.y + sq(A.x)/det * det;  // simplified orthocenter formula
+    const Hx = (sq(A.x)*(B.y-C.y)-sq(A.y)*(B.x-C.x)+(sq(B.x)*(C.y-A.y)-sq(B.y)*(C.x-A.x))+(sq(C.x)*(A.y-B.y)-sq(C.y)*(A.x-B.x))) / det;
+    const Hy = ((sq(A.x)-sq(A.y))*(B.x-C.x) - (sq(B.x)-sq(B.y))*(A.x-C.x) + (sq(C.x)-sq(C.y))*(A.x-B.x)) / det * -1;
+    centers.push({ x: Hx, y: Hy, info: POINT_COLORS[3] });
+  } else {
+    centers.push(centers[0]);
+  }
+  
+  // Nine-point center (midpoint of circumcenter and orthocenter)
+  if (centers.length >= 3) {
+    const cc = centers[2];
+    const oh = centers[3] || { x: 0, y: 0 };
+    centers.push({ x: (cc.x+oh.x)/2, y: (cc.y+oh.y)/2, info: POINT_COLORS[4] });
+  }
+  
+  // Approximate symmedian via barycentric weighting
+  if (abs(det) > 0.5) {
+    centers.push({ x: (sq(a)*A.x+sq(b)*B.x+sq(c_)*C.x)/(sq(a)+sq(b)+sq(c_)), 
+                   y: (sq(a)*A.y+sq(b)*B.y+sq(c_)*C.y)/(sq(a)+sq(b)+sq(c_)),
+                   info: POINT_COLORS[5] });  // Lemoine point ≈ symmedian
+  } else {
+    centers.push(centers[0]);
+  }
+}
+
+// ====== ANIMATION: Triangle with glow + vertex markers ======
+
+function animateTriangle() {
+  const pulse = sin(tElapsed * 0.4) * 10;
+  
+  push();
+  noStroke();
+  
+   // Outer glow ring (animated)
+  fill(220, 60, 80, sin(tElapsed*0.3)*20+50);
+  const v = [A, B, C];
+  for (let i = 0; i < 3; i++) {
+    const px = v[i].x + cos(tElapsed*0.4+i*2.1)*pulse;
+    const py = v[i].y + sin(tElapsed*0.4+i*2.1)*pulse;
+    circle(px, py, 20);
+  }
+  
+   // Triangle edges (glow layers)
+  for (let w = 6; w >= 3; w--) {
+    stroke(220, 50, sin(tElapsed*0.4)*15+78, w===6?25:90);
+    strokeWeight(w);
+     noFill();
+    drawTri(v);
+  }
+  
+   // Filled body — subtle gradient feel via alpha
+  fill(220, 45, 76, sin(tElapsed*0.3)*18+50);
+  drawTri(v);
+  
+   // Vertex dots
+  for (let i = 0; i < 3; i++) {
+    const px = v[i].x + cos(tElapsed*0.4+i*2.1)*pulse;
+    const py = v[i].y + sin(tElapsed*0.4+i*2.1)*pulse;
+    
+     ring pulse
+    noStroke();
+    fill(220, 50, 92, sin(tElapsed*0.5+i)*20+60);
+    circle(px, py, 14+sin(tElapsed*0.3+i)*3);
+    
+     solid dot
+    stroke(220, 80, 95);
+    strokeWeight(2);
+    fill(150, 70, 92);
+    circle(px, py, 8);
+   }
+  
+  pop();
+}
+
+function drawTri(pts) {
+  beginShape();
+  for (let p of pts) {
+    vertex(p.x, p.y);
+  }
+  endShape(CLOSE);
+}
+
+// ====== CONNECTIONS: spirals from centroid outward ======
+
+function drawConnections() {
+  push();
+  
+  const cx = (A.x+B.x+C.x)/3;
+  const cy = (A.y+B.y+C.y)/3;
+  const phase = sin(tElapsed*0.3)*0.5+0.5;  // 0..1 oscillation
+  
+  for (let i = 0; i < centers.length; i++) {
+    const c = centers[i];
+    const rgb = hexCol(c.info.hex);
+    const hue = map(rgb[0], 0, 255, 0, 360);
+   const sat = map(rgb[1], 0, 255, 0, 100);
+    const bri = map(rgb[2], 0, 255, 0, 100);
+    
+     // Skip non-selected points if focused mode
+    if (selectedIdx >= 0 && selectedIdx !== i) {
+      stroke(hue, sat, bri, 8);
+     } else {
+      stroke(hue, 
+             sin(tElapsed*0.4+i)*25+73, 
+             cos(tElapsed*0.35+i)*15+80,
+             sin(tElapsed*0.3+i)*35+62);
+    }
+    noFill();
+    strokeWeight(1.5);
+    
+     // Draw curved connecting paths (one per vertex → center)
+    for (let j = 0; j < 3; j++) {
+      const v = [A, B, C][j];
+      beginShape();
+      for (let t = 0; t <= phase * 2; t += 0.05) {
+        const angle = atan2(c.y-cy, c.x-cx) + TWO_PI*t/centers.length;
+        const r = lerp(40, d(v, c), t/(t+1));
+        vertex(cx + cos(angle+tElapsed*0.2)*r, cy + sin(angle+tElapsed*0.25)*r);
+      }
+    endShape();
+   }
+  }
+  
+  pop();
+}
+
+// ====== CENTER POINTS: animated markers ======
+
+function drawCenters() {
+  push();
+  textAlign(CENTER, CENTER);
+  
+  const v = [A, B, C];
+  
+  for (let i = 0; i < centers.length; i++) {
+    if (selectedIdx >= 0 && selectedIdx !== i) continue;  // skip in focused mode
+    
+    const c = centers[i];
+    const rgb = hexCol(c.info.hex);
+   const hue = map(rgb[0], 0, 255, 0, 360);
+    const sat = map(rgb[1], 0, 255, 0, 100);
+    const bri = map(rgb[2], 0, 255, 0, 100);
+    
+     // Wobble offset (each point moves at different phase)
+    const ox = sin(tElapsed*0.3+i*twoHalf)+8;
+   const oy = cos(tElapsed*0.28+i*threeQuarter)*6;
+    const sx = c.x + ox, sy = c.y + oy;
+    
+     // Pulsing halo (larger than dot)
+    noStroke();
+    fill(hue, sat+15, min(bri+20, 95), sin(tElapsed*0.4+i)*30+45);
+    circle(sx, sy, 26 + sin(tElapsed*0.5+i)*4);
+    
+     // Outer ring (stroked)
+    stroke(hue, min(sat+25, 100), max(bri-10, 70), 95);
+    strokeWeight(2);
+   fill(hue, sat, bri, sin(tElapsed*0.3+i)*25+65);
+    circle(sx, sy, 14);
+    
+     // Inner white dot (small highlight)
+    noStroke();
+    fill(hue, min(sat-20, 80), 95, sin(tElapsed*0.5+i)*30+70);
+    circle(sx-2, sy-1, 5);
+    
+     // Label above point (with gentle rotation)
+    const labAlpha = sin(tElapsed*0.35+i)*25+78;
+    fill(hue, sat, min(bri+10, 95), labAlpha);
+   textSize(10);
+   translate(sx, sy-16);
+    rotate(sin(tElapsed*0.2+i)*.25);
+   text(c.info.name, 0, 0);
+    resetMatrix();
+    
+     // Description line if selected
+    if (selectedIdx === i) {
+      textSize(9);
+      fill(hue, sat+10, min(bri-5, 85), sin(tElapsed*0.6+i)*25+70);
+      text(c.info.desc, 0, -22);  // above name
+      
+      // Highlighted larger ring for selected point
+      stroke(hue, 100, 95);
+        strokeWeight(3);
+      noFill();
+     circle(sx, sy, 22);
+      
+      // Label on canvas too
+      translate(sx, sy + 20);
+   fill(hue, sat, 95, sin(tElapsed*0.5+i)*30+80);
+    textSize(11);  
+    text('(Selected)', 0, 0);
+     resetMatrix();
+   }
+   }
+  
+  // Draw the mathematical triangle itself with labeled vertices
+  push();
+  noFill();
+  stroke(220, 50, 82);
+  strokeWeight(3);
+  drawTri(v);
+  
+   Vertex markers (small triangles)
+  for (let i = 0; i < 3; i++) {
+    const px = v[i].x + cos(tElapsed*0.4+i*2.1)*sin(tElapsed*0.4)*8;
+    const py = v[i].y + sin(tElapsed*0.4+i*2.1)*sin(tElapsed*0.4)*8;
+    
+     noStroke();
+    fill(220, 65, 88);
+   circle(px, py, 10);
+    
+     // Alpha inside vertex dot
+    stroke(220, 80, 94);
+    strokeWeight(1.5);
+    fill(150, 60, 90);
+    circle(px, py, 6);
+    
+     // Vertex label (A,B,C)
+    noStroke();
+    fill(220, 70, 95);
+    textSize(14);  
+    translate(px, py + 12);
+    text('ABC'[i], 0, 0);
+   resetMatrix();
+  }
+  
+  pop();
+  
+  pop();
+}
+
+// ====== CONTROLS ======
+
+function doRandom() {
+  tElapsed = 0;
+  selectedIdx = -1;
+  generateRandomTriangle();
+  updatePanel('🔀 New triangle generated!', 'Click any button or press keys to explore.');
+}
+
+function doPause() {
+  pauseMode = !pauseMode;
+  updatePanel(
+    pauseMode ? '⏸ Paused' : '▶ Playing',
+    `Time: ${floor(tElapsed)} frames | Speed: ${timeScale.toFixed(2)}x`
   );
 }
 
-// Calculate all the mathematical points of interest
-function calculateCenters() {
-  centers = [];
-  
-  // Side lengths
-  const a = dist(B, C); // Opposite A
-  const b = dist(A, C); // Opposite B
-  const c = dist(A, B); // Opposite C
-  
-  // Centroid (average of vertices)
-  const centroid = {
-    x: (A.x + B.x + C.x) / 3,
-    y: (A.y + B.y + C.y) / 3,
-    name: 'Centroid',
-    color: '#51cf66'
-  };
-  centers.push(centroid);
-  
-  // Incenter (weighted average by side lengths)
-  const incenter = {
-    x: (a * A.x + b * B.x + c * C.x) / (a + b + c),
-    y: (a * A.y + b * B.y + c * C.y) / (a + b + c),
-    name: 'Incenter',
-    color: '#ff6b6b'
-  };
-  centers.push(incenter);
-  
-  // Circumcenter (equidistant from all vertices)
-  const D = 2 * (A.x * (B.y - C.y) + B.x * (C.y - A.y) + C.x * (A.y - B.y));
-  if (abs(D) > 0.1) {
-    const Ux = ((sq(A.x) + sq(A.y)) * (B.y - C.y) + 
-                 (sq(B.x) + sq(B.y)) * (C.y - A.y) + 
-                 (sq(C.x) + sq(C.y)) * (A.y - B.y)) / D;
-    const Uy = ((sq(A.x) + sq(A.y)) * (C.x - B.x) + 
-                 (sq(B.x) + sq(B.y)) * (A.x - C.x) + 
-                 (sq(C.x) + sq(C.y)) * (B.x - A.x)) / D;
-    centers.push({ x: Ux, y: Uy, name: 'Circumcenter', color: '#ffd43b' });
+function doShowAll() {
+  selectedIdx = -1;
+  tElapsed = 0;
+  updatePanel('📌 Showing all points', 
+   centers.map(c => `${c.info.name}: ${c.info.desc}`).join('<br>')
+  );
+}
+
+function doNextPoint() {
+  if (selectedIdx < 0 || selectedIdx >= centers.length-1) {
+    selectedIdx = 0;
   } else {
-    centers.push({ x: centroid.x, y: centroid.y, name: 'Circumcenter (degenerate)', color: '#ffd43b' });
+    selectedIdx++;
   }
-  
-  // Orthocenter (intersection of altitudes)
-  const D2 = A.x * B.y - A.y * B.x + B.x * C.y - B.y * C.x + C.x * A.y - C.y * A.x;
-  if (abs(D2) > 0.1) {
-    const Hx = (A.x * A.x * B.y - A.y * A.y * B.x + 
-                B.x * B.x * C.y - B.y * B.y * C.x + 
-                C.x * C.x * A.y - C.y * C.y * A.x) / D2;
-    const Hy = (A.x * A.x * A.y - A.y * B.x * B.y + 
-                B.x * B.x * B.y - B.y * C.x * C.y + 
-                C.x * C.x * A.y - C.y * A.x * A.y) / D2;
-    centers.push({ x: Hx, y: Hy, name: 'Orthocenter', color: '#cc5de8' });
-  } else {
-    centers.push({ x: centroid.x, y: centroid.y, name: 'Orthocenter (degenerate)', color: '#cc5de8' });
-  }
-  
-  // Nine-point center (midpoint between circumcenter and orthocenter)
-  if (centers.length >= 3) {
-    const circumcenter = centers[2];
-    const orthocenter = centers[4] || centroid;
-    centers.push({ 
-      x: (circumcenter.x + orthocenter.x) / 2, 
-      y: (circumcenter.y + orthocenter.y) / 2, 
-      name: 'Nine-point Center', 
-      color: '#20c997' 
-    });
-  }
-  
-  // Symmedian point (approximation for visualization)
-  const symmedian = {
-    x: A.x * cos(atan2(B.y - A.y, B.x - A.x)) + 
-       B.x * cos(atan2(C.y - B.y, C.x - B.x)) / sin(PI/3),
-    y: B.y * sin(PI/3) + C.y * cos(atan2(A.y - C.y, A.x - C.x)),
-    name: 'Symmedian',
-    color: '#ff922b'
-  };
-  centers.push(symmedian);
-  
-  labels = centers.map(t => t.name);
+   const info = centers[selectedIdx].info;
+  updatePanel(`📍 ${info.name}`, info.desc);
 }
 
-// ====== ANIMATION FUNCTIONS ======
-
-function animateTriangle() {
-  const pulse = sin(timeElapsed * 0.02) * 15; // Pulse effect
-  
-  push();
-    strokeWeight(3);
-    stroke('#6c8cff', 70, 90);
-    
-    // Draw triangle with subtle animation
-    fill('#ff6b6b', 40, 85);
-    noStroke();
-    
-    beginShape();
-      curveVertex(A.x + cos(timeElapsed * 0.01) * pulse, 
-                   A.y + sin(timeElapsed * 0.01) * pulse);
-      curveVertex(B.x + cos(timeElapsed * 0.014 + 2) * pulse, 
-                   B.y + sin(timeElapsed * 0.013 + 2) * pulse);
-      curveVertex(C.x + cos(timeElapsed * 0.011 + 4) * pulse, 
-                   C.y + sin(timeElapsed * 0.012 + 4) * pulse);
-    endShape(CLOSE);
-    
-    // Vertex markers
-    for (let pt of [A, B, C]) {
-      circle(pt.x, pt.y, 14);
-      stroke(255, 30, 95);
-      fill('#6c8cff', 85, 95);
-      circle(pt.x, pt.y, 8);
-      noFill();
-    }
-  pop();
+function doFaster() {
+  timeScale *= 1.5;
+  if (timeScale > 4) timeScale = 4;
+  updatePanel('🐇 Faster! Speed:', `${timeScale.toFixed(2)}x`);
 }
 
-function drawConnections(phase) {
-  push();
-    const centerX = (A.x + B.x + C.x) / 3;
-    const centerY = (A.y + B.y + C.y) / 3;
-    
-    for (let i = 0; i < centers.length; i++) {
-      const center = centers[i];
-      const colorHex = hexToHSB(centers[i].color);
-      
-      // Pulsing connection lines
-      stroke(colorHex.hue, 
-             sin(timeElapsed * 0.03) * 40 + 60, 
-             cos(timeElapsed * 0.025) * 15 + 80,
-             sin(timeElapsed * 0.02 + i) * 40 + 60);
-      
-      noFill();
-      strokeWeight(1);
-      
-      beginShape();
-        for (let t = 0; t <= phase; t += 0.01) {
-          const radius = map(t, 0, 1, 50, dist(centerX, centerY, center.x, center.y));
-          
-          vertex(
-            centerX + cos(timeElapsed * 0.01 + TWO_PI * i / centers.length + t) * radius, 
-            centerY + sin(timeElapsed * 0.012 + TWO_PI * i / centers.length + t) * radius
-          );
-        }
-      endShape();
-    }
-  pop();
+function doSlower() {
+  timeScale /= 1.5;
+  if (timeScale < 0.3) timeScale = 0.3;
+   updatePanel('🐢 Slower', `Speed: ${timeScale.toFixed(2)}x`);
 }
 
-function drawCenters(phase) {
-  push();
-    textAlign(CENTER, CENTER);
-    
-    for (let i = 0; i < centers.length; i++) {
-      const center = centers[i];
-      const colorHex = hexToHSB(centers[i].color);
-      
-      // Bounce/move animation
-      const offsetX = cos(timeElapsed * 0.02 + i * PI/3) * 15;
-      const offsetY = sin(timeElapsed * 0.018 + i * PI/3) * 10;
-      
-      fill(colorHex.hue, 
-           sin(timeElapsed * 0.025 + i) * 20 + 80, 
-           cos(timeElapsed * 0.019 + i) * 10 + 75,
-           sin(timeElapsed * 0.022 + i) * 40 + 60);
-      
-      noStroke();
-      circle(center.x + offsetX, center.y + offsetY, 23);
-      
-      stroke(colorHex.hue, 
-             sin(timeElapsed * 0.027 + i) * 15 + 85, 
-             cos(timeElapsed * 0.023 + i) * 8 + 90,
-             70);
-      strokeWeight(2);
-      circle(center.x + offsetX, center.y + offsetY, 16);
-      
-      noStroke();
-      // Label with rotation fade effect
-      translate(center.x + offsetX, center.y + offsetY);
-      rotate(sin(timeElapsed * 0.015 + i));
-      fill(colorHex.hue, 
-           sin(timeElapsed * 0.02 + i) * 20 + 80, 
-           cos(timeElapsed * 0.019 + i) * 10 + 75,
-           sin(timeElapsed * 0.02 + i) * 40 + 60);
-      textSize(11);
-      text(center.name, 0, -20);
-      resetMatrix();
-    }
-  
-  pop();
+function updatePanel(title, subtitle) {
+  document.getElementById('panel-title').textContent = title;
+  document.querySelector('#info-panel span:last-child') || 
+    document.body.insertAdjacentHTML('beforeend', `<span id="subtitle">${subtitle}</span>`);
+   const sb = document.getElementById('subtitle');
+  if (sb) sb.textContent = subtitle;
 }
 
-// ====== UTILITY FUNCTIONS =====
+function updateCoordsDisplay() {
+  const el = document.getElementById('coords-box');
+  if (!el || centers.length === 0) return;
+   
+  // Show triangle vertex coordinates
+  el.innerHTML = 
+    `<b style="color:#a5b4fc">Triangle Vertices</b><br>` +
+    `A(${floor(A.x)}, ${floor(A.y)})<br>`+
+    `B(${floor(B.x)}, ${floor(B.y)})<br>`+
+    `C(${floor(C.x)}, ${floor(C.y)})`;+
+   if (selectedIdx >= 0 && centers[selectedIdx]) {
+    const info = centers[selectedIdx].info;
+    el.innerHTML += `<br><b style="color:${info.hex}">Selected: ${info.name}</b>` +
+     `(${floor(centers[selectedIdx].x)}, ${floor(centers[selectedIdx].y)})`;
+   }
+ }
 
-function hexToHSB(hexColor) {
-  const rgb = color(hexColor);
-  return { 
-    hue: floor(rgb[0] / 2.55), 
-    sat: floor(rgb[1] / 2.55), 
-    bri: floor(rgb[2] / 2.55) 
-  };
+// ====== KEYBOARD SHORTCUTS ======
+
+function keyPressed() {
+  if (key === 'r' || key === 'R') doRandom();
+  else if (key === ' ') { doPause(); return false; }  // prevent scroll
+  else if (key === 'n' || key === 'N') doNextPoint();
+  else if (key === 'f' || key === 'F') doFaster();
+   else if (key === 's' && timeScale > 0.5) { doSlower(); }
+   else if (key === 'a' || key === 'A') doShowAll();
 }
 
 </script>
