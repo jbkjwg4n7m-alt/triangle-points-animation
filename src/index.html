@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Math Triangle Points Animation</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<style>
+html, body { margin: 0; padding: 0; overflow: hidden; background: #0f172a; }
+canvas { display: block; }
+</style>
+</head>
+<body>
+<script>
+// === CONFIGURATION ===
+const CONFIG = {
+  numPoints: 6,
+  animSpeed: 0.015,
+};
+
+// === STATE ===
+let A, B, C; // Triangle vertices
+let centers = []; // Mathematical centers (incenter, centroid, etc.)
+let labels = []; // Names for each center
+let timeElapsed = 0;
+
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  randomSeed(42);
+  noiseSeed(42);
+  
+  generateRandomTriangle();
+  calculateCenters();
+  
+  colorMode(HSB, 360, 100, 100, 100);
+}
+
+function draw() {
+  background('#0f172a');
+  timeElapsed++;
+  
+  // Draw animated triangle with pulsing effect
+  animateTriangle();
+  
+  // Calculate animation phase based on depth (simulate camera)
+  const animPhase = sin(timeElapsed * CONFIG.animSpeed) * 0.5 + 0.5;
+  
+  // Draw connecting lines and points
+  drawConnections(animPhase);
+  
+  // Mark centers with labels rotating in/out view
+  drawCenters(animPhase);
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+}
+
+// ====== GEOMETRY FUNCTIONS ======
+
+function generateRandomTriangle() {
+  const padding = 150;
+  const minX = padding;
+  const maxX = width - padding;
+  const minY = padding + 100;
+  const maxY = height - padding;
+  
+  A = { x: random(minX, (maxX + minX) / 2), y: random(minY, (minY + maxY) / 2) };
+  B = { x: random((maxX + minX) / 2, maxX), y: random(minY, (minY + maxY) / 2) };
+  C = { x: random(minX, maxX), y: random((minY + maxY) / 2, maxY) };
+  
+  const area = abs(
+    A.x * (B.y - C.y) + 
+    B.x * (C.y - A.y) + 
+    C.x * (A.y - B.y)
+  ) / 2;
+  
+  if (area < 5000) generateRandomTriangle(); // Retry if too small
+}
+
+function dist(a, b) {
+  return sqrt(
+    sq(a.x - b.x) + 
+    sq(a.y - b.y)
+  );
+}
+
+// Calculate all the mathematical points of interest
+function calculateCenters() {
+  centers = [];
+  
+  // Side lengths
+  const a = dist(B, C); // Opposite A
+  const b = dist(A, C); // Opposite B
+  const c = dist(A, B); // Opposite C
+  
+  // Centroid (average of vertices)
+  const centroid = {
+    x: (A.x + B.x + C.x) / 3,
+    y: (A.y + B.y + C.y) / 3,
+    name: 'Centroid',
+    color: '#51cf66'
+  };
+  centers.push(centroid);
+  
+  // Incenter (weighted average by side lengths)
+  const incenter = {
+    x: (a * A.x + b * B.x + c * C.x) / (a + b + c),
+    y: (a * A.y + b * B.y + c * C.y) / (a + b + c),
+    name: 'Incenter',
+    color: '#ff6b6b'
+  };
+  centers.push(incenter);
+  
+  // Circumcenter (equidistant from all vertices)
+  const D = 2 * (A.x * (B.y - C.y) + B.x * (C.y - A.y) + C.x * (A.y - B.y));
+  if (abs(D) > 0.1) {
+    const Ux = ((sq(A.x) + sq(A.y)) * (B.y - C.y) + 
+                 (sq(B.x) + sq(B.y)) * (C.y - A.y) + 
+                 (sq(C.x) + sq(C.y)) * (A.y - B.y)) / D;
+    const Uy = ((sq(A.x) + sq(A.y)) * (C.x - B.x) + 
+                 (sq(B.x) + sq(B.y)) * (A.x - C.x) + 
+                 (sq(C.x) + sq(C.y)) * (B.x - A.x)) / D;
+    centers.push({ x: Ux, y: Uy, name: 'Circumcenter', color: '#ffd43b' });
+  } else {
+    centers.push({ x: centroid.x, y: centroid.y, name: 'Circumcenter (degenerate)', color: '#ffd43b' });
+  }
+  
+  // Orthocenter (intersection of altitudes)
+  const D2 = A.x * B.y - A.y * B.x + B.x * C.y - B.y * C.x + C.x * A.y - C.y * A.x;
+  if (abs(D2) > 0.1) {
+    const Hx = (A.x * A.x * B.y - A.y * A.y * B.x + 
+                B.x * B.x * C.y - B.y * B.y * C.x + 
+                C.x * C.x * A.y - C.y * C.y * A.x) / D2;
+    const Hy = (A.x * A.x * A.y - A.y * B.x * B.y + 
+                B.x * B.x * B.y - B.y * C.x * C.y + 
+                C.x * C.x * A.y - C.y * A.x * A.y) / D2;
+    centers.push({ x: Hx, y: Hy, name: 'Orthocenter', color: '#cc5de8' });
+  } else {
+    centers.push({ x: centroid.x, y: centroid.y, name: 'Orthocenter (degenerate)', color: '#cc5de8' });
+  }
+  
+  // Nine-point center (midpoint between circumcenter and orthocenter)
+  if (centers.length >= 3) {
+    const circumcenter = centers[2];
+    const orthocenter = centers[4] || centroid;
+    centers.push({ 
+      x: (circumcenter.x + orthocenter.x) / 2, 
+      y: (circumcenter.y + orthocenter.y) / 2, 
+      name: 'Nine-point Center', 
+      color: '#20c997' 
+    });
+  }
+  
+  // Symmedian point (approximation for visualization)
+  const symmedian = {
+    x: A.x * cos(atan2(B.y - A.y, B.x - A.x)) + 
+       B.x * cos(atan2(C.y - B.y, C.x - B.x)) / sin(PI/3),
+    y: B.y * sin(PI/3) + C.y * cos(atan2(A.y - C.y, A.x - C.x)),
+    name: 'Symmedian',
+    color: '#ff922b'
+  };
+  centers.push(symmedian);
+  
+  labels = centers.map(t => t.name);
+}
+
+// ====== ANIMATION FUNCTIONS ======
+
+function animateTriangle() {
+  const pulse = sin(timeElapsed * 0.02) * 15; // Pulse effect
+  
+  push();
+    strokeWeight(3);
+    stroke('#6c8cff', 70, 90);
+    
+    // Draw triangle with subtle animation
+    fill('#ff6b6b', 40, 85);
+    noStroke();
+    
+    beginShape();
+      curveVertex(A.x + cos(timeElapsed * 0.01) * pulse, 
+                   A.y + sin(timeElapsed * 0.01) * pulse);
+      curveVertex(B.x + cos(timeElapsed * 0.014 + 2) * pulse, 
+                   B.y + sin(timeElapsed * 0.013 + 2) * pulse);
+      curveVertex(C.x + cos(timeElapsed * 0.011 + 4) * pulse, 
+                   C.y + sin(timeElapsed * 0.012 + 4) * pulse);
+    endShape(CLOSE);
+    
+    // Vertex markers
+    for (let pt of [A, B, C]) {
+      circle(pt.x, pt.y, 14);
+      stroke(255, 30, 95);
+      fill('#6c8cff', 85, 95);
+      circle(pt.x, pt.y, 8);
+      noFill();
+    }
+  pop();
+}
+
+function drawConnections(phase) {
+  push();
+    const centerX = (A.x + B.x + C.x) / 3;
+    const centerY = (A.y + B.y + C.y) / 3;
+    
+    for (let i = 0; i < centers.length; i++) {
+      const center = centers[i];
+      const colorHex = hexToHSB(centers[i].color);
+      
+      // Pulsing connection lines
+      stroke(colorHex.hue, 
+             sin(timeElapsed * 0.03) * 40 + 60, 
+             cos(timeElapsed * 0.025) * 15 + 80,
+             sin(timeElapsed * 0.02 + i) * 40 + 60);
+      
+      noFill();
+      strokeWeight(1);
+      
+      beginShape();
+        for (let t = 0; t <= phase; t += 0.01) {
+          const radius = map(t, 0, 1, 50, dist(centerX, centerY, center.x, center.y));
+          
+          vertex(
+            centerX + cos(timeElapsed * 0.01 + TWO_PI * i / centers.length + t) * radius, 
+            centerY + sin(timeElapsed * 0.012 + TWO_PI * i / centers.length + t) * radius
+          );
+        }
+      endShape();
+    }
+  pop();
+}
+
+function drawCenters(phase) {
+  push();
+    textAlign(CENTER, CENTER);
+    
+    for (let i = 0; i < centers.length; i++) {
+      const center = centers[i];
+      const colorHex = hexToHSB(centers[i].color);
+      
+      // Bounce/move animation
+      const offsetX = cos(timeElapsed * 0.02 + i * PI/3) * 15;
+      const offsetY = sin(timeElapsed * 0.018 + i * PI/3) * 10;
+      
+      fill(colorHex.hue, 
+           sin(timeElapsed * 0.025 + i) * 20 + 80, 
+           cos(timeElapsed * 0.019 + i) * 10 + 75,
+           sin(timeElapsed * 0.022 + i) * 40 + 60);
+      
+      noStroke();
+      circle(center.x + offsetX, center.y + offsetY, 23);
+      
+      stroke(colorHex.hue, 
+             sin(timeElapsed * 0.027 + i) * 15 + 85, 
+             cos(timeElapsed * 0.023 + i) * 8 + 90,
+             70);
+      strokeWeight(2);
+      circle(center.x + offsetX, center.y + offsetY, 16);
+      
+      noStroke();
+      // Label with rotation fade effect
+      translate(center.x + offsetX, center.y + offsetY);
+      rotate(sin(timeElapsed * 0.015 + i));
+      fill(colorHex.hue, 
+           sin(timeElapsed * 0.02 + i) * 20 + 80, 
+           cos(timeElapsed * 0.019 + i) * 10 + 75,
+           sin(timeElapsed * 0.02 + i) * 40 + 60);
+      textSize(11);
+      text(center.name, 0, -20);
+      resetMatrix();
+    }
+  
+  pop();
+}
+
+// ====== UTILITY FUNCTIONS =====
+
+function hexToHSB(hexColor) {
+  const rgb = color(hexColor);
+  return { 
+    hue: floor(rgb[0] / 2.55), 
+    sat: floor(rgb[1] / 2.55), 
+    bri: floor(rgb[2] / 2.55) 
+  };
+}
+
+</script>
+</body>
+</html>
